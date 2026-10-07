@@ -6,7 +6,7 @@ import os
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get('PORT', 8099))
-HOST = os.environ.get('HOST', '127.0.0.1')
+HOST = os.environ.get('HOST', '0.0.0.0')
 
 UA = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
@@ -22,7 +22,22 @@ lock = threading.Lock()
 
 def yt_get(url, timeout=20):
     req = urllib.request.Request(url, headers=UA)
-    return urllib.request.urlopen(req, timeout=timeout).read().decode('utf-8', errors='ignore')
+    try:
+        return urllib.request.urlopen(req, timeout=timeout).read().decode('utf-8', errors='ignore')
+    except urllib.error.HTTPError as e:
+        if e.code == 429 or 500 <= e.code < 600:
+            time.sleep(2)
+            req2 = urllib.request.Request(url, headers=UA)
+            return urllib.request.urlopen(req2, timeout=timeout).read().decode('utf-8', errors='ignore')
+        raise
+
+
+def trim_caches():
+    with lock:
+        for c in (search_cache, meta_cache, video_cache, short_cache):
+            if len(c) > 2000:
+                for k in list(c.keys())[:-1500]:
+                    del c[k]
 
 
 def extract_ids(html, exclude=None):
@@ -151,6 +166,8 @@ class H(SimpleHTTPRequestHandler):
     def do_GET(self):
         p = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(p.query)
+        if p.path.startswith('/api/'):
+            trim_caches()
         if p.path == '/api/trending':
             return self.serve_search('#shorts')
         if p.path == '/api/search':
@@ -180,6 +197,15 @@ class H(SimpleHTTPRequestHandler):
             if not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid or ''):
                 return self.send_json({})
             return self.send_json(video_details(vid))
+        if p.path == '/api/channel':
+            cid = q.get('id', [''])[0]
+            if not re.fullmatch(r'UC[A-Za-z0-9_-]{22}', cid or ''):
+                return self.send_json([])
+            try:
+                html = yt_get('https://www.youtube.com/channel/' + cid + '/shorts?hl=he&gl=IL')
+                return self.send_json(enrich(shorts_ids(html)[:30]))
+            except Exception:
+                return self.send_json([])
         return super().do_GET()
 
     def serve_search(self, query):

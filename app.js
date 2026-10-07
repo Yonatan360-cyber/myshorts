@@ -65,6 +65,7 @@ let feedIds = view;
 let seen = new Set();
 let players = {};
 let wantsPlay = null;
+let playSpeed = 1;
 let currentIndex = 0;
 let muted = true;
 let ytReady = false;
@@ -76,6 +77,7 @@ let queryCursor = 0;
 const feed = document.getElementById("feed");
 const toast = document.getElementById("toast");
 const liveStatus = document.getElementById("liveStatus");
+window.__ms = { get players(){ return players; }, get view(){ return view; }, get qi(){ return currentIndex; } };
 
 function showToast(msg){
   toast.textContent = msg;
@@ -382,28 +384,61 @@ function ensureBatchStats(){
   }, 800);
 }
 
-const observer = new IntersectionObserver(entries => {
-  entries.forEach(en => {
-    if (!en.isIntersecting) return;
-    const i = +en.target.dataset.index;
-    if (i !== currentIndex){
-      const dwell = (Date.now() - enterT) / 1000;
-      const prev = view[currentIndex];
-      if (prev){
-        if (dwell >= 8) bump(prev, Math.min(3, dwell / 10));
-        else if (dwell < 1 && dwell > 0.3) bump(prev, -1.5);
-        else if (dwell < 2.5 && dwell >= 1) bump(prev, -0.5);
-      }
-      enterT = Date.now();
-      currentIndex = i;
-      if (view[i]) ensureDetails(view[i]);
+function onRowVisible(i){
+  if (i < 0 || i >= view.length || !view[i]) return;
+  if (wantsPlay !== key(view[i])) wantsPlay = null;
+  if (i !== currentIndex){
+    const dwell = (Date.now() - enterT) / 1000;
+    const prev = view[currentIndex];
+    if (prev){
+      if (dwell >= 8) bump(prev, Math.min(3, dwell / 10));
+      else if (dwell < 1 && dwell > 0.3) bump(prev, -1.5);
+      else if (dwell < 2.5 && dwell >= 1) bump(prev, -0.5);
     }
-    const k = view[i] ? key(view[i]) : null;
-    Object.entries(players).forEach(([pk,p]) => { try { pk === k ? p.playVideo() : p.pauseVideo(); } catch(e){} });
-    try { history.replaceState(null, "", "?s=" + shareCode(view[i])); } catch(e){}
-    if (i >= view.length - 4) loadMore();
-  });
+    enterT = Date.now();
+    currentIndex = i;
+    ensureDetails(view[i]);
+  }
+  const k = key(view[i]);
+  if (!players[k] && ytReady){ wantsPlay = k; createPlayer(view[i]); }
+  Object.entries(players).forEach(([pk,p]) => { try { pk === k ? p.playVideo() : p.pauseVideo(); } catch(e){} });
+  const np = players[k];
+  if (np) setTimeout(() => {
+    try{
+      const cur = view[currentIndex];
+      if (!cur || key(cur) !== k || !np.getPlayerState) return;
+      const st = np.getPlayerState();
+      if (st === -1 || st === 5) np.playVideo();
+    }catch(e){}
+  }, 700);
+  try { history.replaceState(null, "", "?s=" + shareCode(view[i])); } catch(e){}
+  if (i >= view.length - 4) loadMore();
+}
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(en => { if (en.isIntersecting) onRowVisible(+en.target.dataset.index); });
 }, { root: feed, threshold: 0.6 });
+// גיבוי למקרה שה-observer קפוא (טאב ברקע, דפדפנים משונים): חישוב מתמטי מ-scrollTop
+let fallbackTick = 0;
+function fallbackCheck(){
+  if (!view.length) return;
+  const mid = feed.scrollTop + (feed.clientHeight || 600) / 2;
+  let best = 0, bestD = Infinity;
+  const rows = feed.children;
+  for (let n = 0; n < rows.length; n++){
+    const r = rows[n];
+    if (!r.dataset || r.dataset.index === undefined) continue;
+    const d = Math.abs((r.offsetTop + r.offsetHeight / 2) - mid);
+    if (d < bestD){ bestD = d; best = +r.dataset.index; }
+  }
+  if (best !== currentIndex) onRowVisible(best);
+}
+setInterval(fallbackCheck, 1500);
+feed.addEventListener("scroll", () => {
+  const now = Date.now();
+  if (now - fallbackTick < 800) return;
+  fallbackTick = now;
+  fallbackCheck();
+}, { passive: true });
 
 function shareCode(s){ return s.id; }
 
@@ -463,10 +498,12 @@ function buildRow(s, i){
       <div class="spinner"></div>
       ${s.fresh ? '<div class="new-badge">🆕</div>' : ""}
       <button class="mute-btn" title="קול">🔇</button>
+      <button class="spd-btn" title="מהירות ניגון">1×</button>
       <div class="bottom-info">
         <div class="chan" title="פתח את הערוץ">
           <div class="avatar">${s.avatar ? `<img src="${esc(s.avatar)}" alt="" loading="lazy">` : esc((s.channel || "@")[1] || "M")}</div>
           <b>${esc(s.channel)}</b>
+          <button class="more-btn" title="עוד שורטס מהערוץ הזה">עוד ▸</button>
         </div>
         <div class="title">${esc(s.title)}</div>
         <div class="meta-line">${metaLine(s)}</div>
@@ -500,6 +537,7 @@ function buildRow(s, i){
     showToast("הבנתי 👍 נראה לך פחות כאלה");
     setTimeout(() => goTo(currentIndex + 1), 350);
   };
+  row.querySelector(".more-btn").onclick = e => { e.stopPropagation(); moreFromChannel(s); };
   row.querySelector(".chan").onclick = e => {
     e.stopPropagation();
     const url = s.channelId ? "https://www.youtube.com/channel/" + s.channelId
@@ -530,12 +568,31 @@ function buildRow(s, i){
     togglePlay(+row.dataset.index, icon);
   };
   row.querySelector(".mute-btn").onclick = e => { e.stopPropagation(); toggleMute(); document.querySelectorAll(".mute-btn").forEach(b => b.textContent = muted ? "🔇" : "🔊"); };
+  const spd = row.querySelector(".spd-btn");
+  spd.textContent = playSpeed + "×";
+  spd.onclick = e => {
+    e.stopPropagation();
+    const steps = [1, 1.25, 1.5, 2, 0.5];
+    playSpeed = steps[(steps.indexOf(playSpeed) + 1) % steps.length];
+    Object.values(players).forEach(p => { try { p.setPlaybackRate && p.setPlaybackRate(playSpeed); } catch(_){} });
+    document.querySelectorAll(".spd-btn").forEach(b => b.textContent = playSpeed + "×");
+    showToast("⏩ מהירות: " + playSpeed + "×");
+  };
 }
 
 function createPlayer(s){
   const k = key(s);
   if (players[k]) return;
   if (!document.getElementById("ytp_" + s.source + "_" + s.id)) return;
+  if (!window.YT?.Player){
+    if (!window.__ytLoading){
+      window.__ytLoading = true;
+      const sc = document.createElement("script");
+      sc.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(sc);
+    }
+    return;
+  }
   try{
     players[k] = new YT.Player("ytp_" + s.source + "_" + s.id, {
       videoId: s.id,
@@ -543,8 +600,18 @@ function createPlayer(s){
       events: {
         onReady: e => {
           try { muted ? e.target.mute() : e.target.unMute(); } catch(_){}
-          const cur = view[currentIndex];
-          if (wantsPlay === k || (cur && key(cur) === k)){ wantsPlay = null; try { e.target.playVideo(); } catch(_){} }
+          try { if (playSpeed !== 1 && e.target.setPlaybackRate) e.target.setPlaybackRate(playSpeed); } catch(_){}
+          // playVideo right at onReady is often swallowed — retry until it takes (never override a real pause)
+          [400, 1200, 2500].forEach(ms => setTimeout(() => {
+            try{
+              const cur = view[currentIndex];
+              if (wantsPlay !== k && (!cur || key(cur) !== k)) return;
+              if (!e.target.getPlayerState) return;
+              const st = e.target.getPlayerState();
+              if (st === -1 || st === 5) e.target.playVideo();
+              else if (st === 1) wantsPlay = null;
+            }catch(_){}
+          }, ms));
         },
         onStateChange: e => {
           const row = feed.querySelector(`[data-vk="${k}"]`);
@@ -555,6 +622,7 @@ function createPlayer(s){
             ic.classList.remove("show");
             if (sp) sp.remove();
           } else if (e.data === YT.PlayerState.PAUSED){
+            if (wantsPlay === k) wantsPlay = null;
             ic.textContent = "▶"; ic.classList.add("show");
           } else if (e.data === YT.PlayerState.ENDED){
             const v = master.find(m => key(m) === k);
@@ -646,6 +714,47 @@ document.querySelector(".logo").onclick = goHome;
 
 // ================= טעינה / אינסוף / רענון =================
 function setLive(txt){ if (liveStatus) liveStatus.textContent = txt; }
+// עוד שורטס מהערוץ הזה — נמשך אמיתי מדף השורטס של הערוץ ביוטיוב
+async function moreFromChannel(s){
+  if (!s.channelId || !location.protocol.startsWith("http")) return showToast("אין מזהה ערוץ לסרטון הזה");
+  showToast("⏳ מביא עוד " + (s.channel || "מהערוץ") + "...");
+  try{
+    const list = await (await fetch("/api/channel?id=" + s.channelId)).json();
+    const fresh = (Array.isArray(list) ? list : []).filter(x => !seen.has(key(x)));
+    if (!fresh.length) return showToast("זה כל מה שיש לערוץ כרגע");
+    fresh.forEach(x => addVideo(x));
+    fresh.forEach(x => view.push(x));
+    feedIds = view;
+    appendRows(fresh);
+    rerankTail();
+    showToast(`➕ נוספו ${fresh.length} שורטס של ${s.channel}`);
+  }catch(e){ showToast("נכשל — נסה שוב"); }
+}
+// טיימר שינה — עוצר את הניגון אחרי X דקות
+let sleepTimer = 0;
+const sleepSteps = [0, 15, 30, 60];
+let sleepIdx = 0;
+function initSleep(){
+  const b = document.getElementById("sleepBtn");
+  if (!b) return;
+  b.style.opacity = ".5";
+  b.onclick = () => {
+    clearTimeout(sleepTimer);
+    sleepIdx = (sleepIdx + 1) % sleepSteps.length;
+    const m = sleepSteps[sleepIdx];
+    b.style.opacity = m ? "1" : ".5";
+    if (!m) return showToast("⏲ טיימר כבוי");
+    showToast(`⏲ אעצור בעוד ${m} דקות`);
+    sleepTimer = setTimeout(() => {
+      const s = view[currentIndex];
+      const p = s && players[key(s)];
+      try { p && p.pauseVideo && p.pauseVideo(); } catch(e){}
+      showToast("😴 לילה טוב — נעצר");
+      sleepIdx = 0;
+      b.style.opacity = ".5";
+    }, m * 60 * 1000);
+  };
+}
 function parseDeep(){
   const v = new URLSearchParams(location.search).get("s");
   if (!v) return null;
@@ -655,6 +764,7 @@ function parseDeep(){
 
 async function initialLoad(){
   updateTaste();
+  initSleep();
   homeMode = true;
   const deep = parseDeep();
   if (deep){ addVideo(deep); pinnedKey = key(deep); }
