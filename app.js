@@ -65,6 +65,7 @@ let feedIds = view;
 let seen = new Set();
 let players = {};
 let wantsPlay = null;
+let userPaused = null;
 let playSpeed = 1;
 let currentIndex = 0;
 let muted = true;
@@ -388,6 +389,7 @@ function onRowVisible(i){
   if (i < 0 || i >= view.length || !view[i]) return;
   if (wantsPlay !== key(view[i])) wantsPlay = null;
   if (i !== currentIndex){
+    userPaused = null;
     const dwell = (Date.now() - enterT) / 1000;
     const prev = view[currentIndex];
     if (prev){
@@ -401,7 +403,7 @@ function onRowVisible(i){
   }
   const k = key(view[i]);
   if (!players[k] && ytReady){ wantsPlay = k; createPlayer(view[i]); }
-  Object.entries(players).forEach(([pk,p]) => { try { pk === k ? p.playVideo() : p.pauseVideo(); } catch(e){} });
+  Object.entries(players).forEach(([pk,p]) => { try { if (pk === k){ if (userPaused !== k) p.playVideo(); } else p.pauseVideo(); } catch(e){} });
   const np = players[k];
   if (np) setTimeout(() => {
     try{
@@ -605,6 +607,7 @@ function createPlayer(s){
           // playVideo right at onReady is often swallowed — retry until it takes (never override a real pause)
           [400, 1200, 2500].forEach(ms => setTimeout(() => {
             try{
+              if (userPaused === k) return;
               const cur = view[currentIndex];
               if (wantsPlay !== k && (!cur || key(cur) !== k)) return;
               if (!e.target.getPlayerState) return;
@@ -622,6 +625,8 @@ function createPlayer(s){
           if (e.data === YT.PlayerState.PLAYING){
             ic.classList.remove("show");
             if (sp) sp.remove();
+            const st2 = row.querySelector(".stall");
+            if (st2) st2.remove();
           } else if (e.data === YT.PlayerState.PAUSED){
             if (wantsPlay === k) wantsPlay = null;
             ic.textContent = "▶"; ic.classList.add("show");
@@ -655,13 +660,15 @@ window.onYouTubeIframeAPIReady = () => {
   });
   setInterval(updateProgress, 300);
 };
+// API cached and fired before we defined the handler? invoke manually.
+if (window.YT?.Player && !ytReady) window.onYouTubeIframeAPIReady();
 
 function togglePlay(i, icon){
   const s = view[i];
   const p = s && players[key(s)];
   if (!p?.getPlayerState) return;
-  if (p.getPlayerState() === YT.PlayerState.PLAYING) p.pauseVideo();
-  else { p.playVideo(); if (icon){ icon.textContent = "▶"; icon.classList.add("show"); setTimeout(() => icon.classList.remove("show"), 500); } }
+  if (p.getPlayerState() === YT.PlayerState.PLAYING){ userPaused = key(s); p.pauseVideo(); }
+  else { userPaused = null; p.playVideo(); if (icon){ icon.textContent = "▶"; icon.classList.add("show"); setTimeout(() => icon.classList.remove("show"), 500); } }
 }
 function toggleMute(){
   muted = !muted;
@@ -676,11 +683,42 @@ function updateProgress(){
       const d = p.getDuration(), t = p.getCurrentTime();
       if (d){
         feed.querySelector(`[data-index="${currentIndex}"] .progress i`)?.style.setProperty("width", (t/d*100) + "%");
-        const sc = view[currentIndex];
-        if (sc && !sc._watchBonus && t / d > 0.8){ sc._watchBonus = true; bump(sc, 2); }
+        if (s && !s._watchBonus && t / d > 0.8){ s._watchBonus = true; bump(s, 2); }
+      }
+      // מזהה תקיעה: לא מתקדם ולא מוריד כלום >12 שניות — מציע שחזור כנה במקום מסך שחור
+      if (s){
+        const st = p.getPlayerState();
+        let bytes = -1;
+        try { bytes = p.getVideoBytesLoaded(); } catch(e){}
+        const stuck = (st === 3 || st === -1 || st === 5) && s._stallT === t && s._stallB === bytes;
+        if (stuck && s._stallSince && Date.now() - s._stallSince > 12000) showStall(s);
+        else if (!stuck){ s._stallT = t; s._stallB = bytes; s._stallSince = Date.now(); }
       }
     }
   }catch(e){}
+}
+function showStall(s){
+  const card = feed.querySelector(`[data-vk="${key(s)}"] .player-card`);
+  if (!card || card.querySelector(".stall") || card.querySelector(".blocked")) return;
+  const d = document.createElement("div");
+  d.className = "blocked stall";
+  d.innerHTML = `<div style="font-size:40px">📡</div><p>הסרטון לא נטען (חוסם פרסומות? חיבור איטי?)</p>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+    <button class="stall-btn" data-a="retry">נסה שוב 🔄</button>
+    <button class="stall-btn" data-a="next">דלג ⏭</button>
+    <a href="https://www.youtube.com/shorts/${s.id}" target="_blank">פתח ביוטיוב ▶</a></div>`;
+  card.appendChild(d);
+  d.querySelector('[data-a="retry"]').onclick = ev => {
+    ev.stopPropagation();
+    d.remove();
+    s._stallSince = 0; s._stallT = -1;
+    const k = key(s);
+    try { players[k] && players[k].destroy && players[k].destroy(); } catch(e){}
+    delete players[k];
+    wantsPlay = k;
+    createPlayer(s);
+  };
+  d.querySelector('[data-a="next"]').onclick = ev => { ev.stopPropagation(); goTo(currentIndex + 1); };
 }
 function goTo(i){
   i = Math.max(0, Math.min(view.length - 1, i));
