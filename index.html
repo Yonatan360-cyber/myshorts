@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyShorts — נטו יוטיוב שורטס, עם הקישור שלך</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-right">
+    <div class="logo" title="MyShorts — לחץ לחזרה הביתה">
+      <span class="logo-play">▶</span>
+      <span class="logo-text">MyShorts</span>
+    </div>
+  </div>
+
+  <div class="search">
+    <input id="addLinkInput" placeholder="חפש שורטס חיים 🔴 או הדבק קישור מיוטיוב">
+    <button id="addLinkBtn">חפש 🔍</button>
+  </div>
+
+  <div class="topbar-left">
+    <button class="icon-btn" id="keyBtn" title="מפתח YouTube API — חיבור רשמי">🔑</button>
+  </div>
+</header>
+
+<div class="key-panel" id="keyPanel">
+  <b>🔑 מפתח YouTube רשמי (חינם — פותח הכל אמיתי)</b>
+  <p>בלי מפתח: סרטונים, כותרות, ערוצים, תמונות ערוץ וצפיות — הכל אמיתי דרך השרת המקומי. עם מפתח: גם <b>לייקים מדויקים + תגובות אמיתיות</b>.</p>
+  <p>להשיג חינם: <span class="mono">console.cloud.google.com → YouTube Data API v3 → Create API Key</span> (מכסה חינמית: 10,000 יחידות ליום)</p>
+  <div class="key-row">
+    <input id="keyInput" placeholder="AIza..." dir="ltr">
+    <button id="saveKey">שמור</button>
+    <button id="delKey">מחק</button>
+  </div>
+  <span id="keyState"></span>
+</div>
+
+<div class="layout">
+  <main class="feed-wrap">
+    <div class="pills" id="pills">
+      <button data-q="#shorts" class="on">🔴 חם עכשיו</button>
+      <button data-q="#shorts funny">😂 מצחיק</button>
+      <button data-q="#shorts music">🎵 מוזיקה</button>
+      <button data-q="#shorts gaming">🎮 גיימינג</button>
+      <button data-q="#shorts food">🍔 אוכל</button>
+      <button data-q="#shorts israel">🇮🇱 ישראל</button>
+      <span class="live-dot" id="liveStatus">🔴 LIVE • טוען שורטס חיים...</span>
+    </div>
+
+    <div class="smartbar">
+      <span class="taste" id="tasteChip">👃 עדיין לומד את הטעם שלך... תעשה לייקים!</span>
+    </div>
+
+    <div id="feed" class="feed"></div>
+  </main>
+</div>
+
+<div class="comments-drawer" id="commentsDrawer">
+  <div class="comments-head">
+    <span>תגובות <b id="commentsCount">0</b></span>
+    <button id="closeComments">✕</button>
+  </div>
+  <div class="comments-list" id="commentsList"></div>
+  <div class="comments-note">💬 צפייה בתגובות אמיתיות בלבד — פרסום תגובה דורש התחברות לגוגל</div>
+</div>
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script src="app.js"></script>
+</body>
+</html>
