@@ -155,24 +155,24 @@ function normalize(items, piped){
   return (Array.isArray(arr) ? arr : []).map(it => piped ? toShortYT(it) : toShortInv(it)).filter(Boolean);
 }
 async function fetchTrendingLive(){
+  try { return await localFetch("/api/trending"); } catch(e){}
   const k = ytKey();
   if (k){
     const r = await officialSearch(k, "#shorts").catch(() => []);
     const ok = await keepShorts(r);
     if (ok.length) return ok;
   }
-  try { return await localFetch("/api/trending"); } catch(e){}
   const { data, piped } = await apiFetch("/api/v1/trending?region=IL", "/trending?region=IL");
   return await keepShorts(normalize(data, piped).slice(0, 40));
 }
 async function fetchSearchLive(q){
+  try { return await localFetch("/api/search?q=" + encodeURIComponent(q)); } catch(e){}
   const k = ytKey();
   if (k){
     const r = await officialSearch(k, q + " #shorts").catch(() => []);
     const ok = await keepShorts(r);
     if (ok.length) return ok;
   }
-  try { return await localFetch("/api/search?q=" + encodeURIComponent(q)); } catch(e){}
   const { data, piped } = await apiFetch("/api/v1/search?q=" + encodeURIComponent(q) + "&type=video", "/search?q=" + encodeURIComponent(q) + "&filter=videos");
   return await keepShorts(normalize(data, piped).slice(0, 30));
 }
@@ -256,9 +256,9 @@ async function pullRelated(s){
   relCooldown = now;
   try{
     let rel = [];
+    rel = await localFetch("/api/related?id=" + s.id).catch(() => []);
     const k = ytKey();
-    if (k) rel = await officialSearch(k, "", s.id).catch(() => []);
-    if (!rel.length) rel = await localFetch("/api/related?id=" + s.id).catch(() => []);
+    if (!rel.length && k) rel = await officialSearch(k, "", s.id).catch(() => []);
     const fresh = rel.filter(r => !seen.has(key(r)));
     if (!fresh.length) return;
     fresh.forEach(r => addVideo(r));
