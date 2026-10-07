@@ -459,6 +459,7 @@ function render(){
     preloader.observe(row);
     if (i < 6 && s.source === "yt" && ytReady) createPlayer(s);
   });
+  view.slice(0, 3).forEach(s => ensureDetails(s));
 }
 // מסדר מחדש רק את מה שעוד לא ראית — בלי לקטוע את הסרטון הנוכחי ובלי לטעון מחדש
 function rerankTail(){
